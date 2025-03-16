@@ -9,8 +9,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var swapInfo: SwapInfo = SwapInfo()
     var notifiedAboutSwap: Bool = false
     var popover: NSPopover!
+    var topProcesses: [AppProcess] = []
     var memoryInfoWrapper: ObservableMemoryInfo!
     var swapInfoWrapper: ObservableSwapInfo!
+    var topProcessesWrapper: ObservableTopProcesses!
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Request permission for notifications
@@ -19,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create wrappers for bindings
         memoryInfoWrapper = ObservableMemoryInfo(memoryInfo: memoryInfo)
         swapInfoWrapper = ObservableSwapInfo(swapInfo: swapInfo)
+        topProcessesWrapper = ObservableTopProcesses(processes: [])
         
         setupPopover()
         setupStatusBar()
@@ -38,9 +41,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 400, height: 140)
+        popover.contentSize = NSSize(width: 400, height: 220)
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: MemoryVisualizationView(memoryInfoWrapper: memoryInfoWrapper, swapInfoWrapper: swapInfoWrapper))
+        popover.contentViewController = NSHostingController(rootView: MemoryVisualizationView(
+            memoryInfoWrapper: memoryInfoWrapper,
+            swapInfoWrapper: swapInfoWrapper,
+            topProcessesWrapper: topProcessesWrapper
+        ))
     }
     
     func setupStatusBar() {
@@ -90,7 +97,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 // Update the view before showing
-                popover.contentViewController = NSHostingController(rootView: MemoryVisualizationView(memoryInfoWrapper: memoryInfoWrapper, swapInfoWrapper: swapInfoWrapper))
+                popover.contentViewController = NSHostingController(rootView: MemoryVisualizationView(
+                    memoryInfoWrapper: memoryInfoWrapper,
+                    swapInfoWrapper: swapInfoWrapper,
+                    topProcessesWrapper: topProcessesWrapper
+                ))
             }
         }
     }
@@ -148,10 +159,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Get memory and swap information
         memoryInfo = getMemoryInfo()
         swapInfo = getSwapInfo()
+        topProcesses = getTopMemoryProcesses(count: 3)
         
         // Update our observable wrappers
         memoryInfoWrapper.updateMemoryInfo(memoryInfo)
         swapInfoWrapper.updateSwapInfo(swapInfo)
+        topProcessesWrapper.updateProcesses(topProcesses)
         
         // Check for swap usage
         if swapInfo.used > 0 && previousSwapUsed == 0 && !notifiedAboutSwap {
@@ -300,6 +313,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         return swapInfo
     }
+    
+    struct AppProcess {
+        var pid: Int
+        var name: String
+        var memoryUsage: UInt64
+    }
+    
+    func getTopMemoryProcesses(count: Int) -> [AppProcess] {
+        var result: [AppProcess] = []
+        
+        let task = Process()
+        task.launchPath = "/bin/ps"
+        task.arguments = ["-axm", "-o", "pid,rss,comm"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                let lines = output.components(separatedBy: "\n")
+                
+                // Skip the header line
+                var processes: [AppProcess] = []
+                for i in 1..<lines.count {
+                    let line = lines[i].trimmingCharacters(in: .whitespaces)
+                    if line.isEmpty { continue }
+                    
+                    let components = line.components(separatedBy: " ").filter { !$0.isEmpty }
+                    if components.count >= 3 {
+                        if let pid = Int(components[0]), let rss = UInt64(components[1]) {
+                            // Get the process name (which might contain spaces)
+                            let nameIndex = line.index(line.startIndex, offsetBy: String(pid).count + String(rss).count + 2)
+                            let name = String(line[nameIndex...]).trimmingCharacters(in: .whitespaces)
+                            
+                            // Convert RSS (KB) to bytes
+                            let memoryUsage = rss * 1024
+                            
+                            // Skip system processes and kernel_task which always shows at top
+                            if !name.contains("kernel_task") && !name.contains("WindowServer") && !name.hasPrefix("/") {
+                                processes.append(AppProcess(pid: pid, name: name, memoryUsage: memoryUsage))
+                            }
+                        }
+                    }
+                }
+                
+                // Sort by memory usage and take the top 'count'
+                result = processes.sorted(by: { $0.memoryUsage > $1.memoryUsage }).prefix(count).map { $0 }
+            }
+        } catch {
+            print("Error getting top processes: \(error.localizedDescription)")
+        }
+        
+        return result
+    }
 }
 
 // MARK: - SwiftUI Memory Visualization
@@ -346,9 +415,23 @@ class ObservableSwapInfo: ObservableObject {
     }
 }
 
+class ObservableTopProcesses: ObservableObject {
+    @Published var processes: [AppDelegate.AppProcess]
+    
+    init(processes: [AppDelegate.AppProcess]) {
+        self.processes = processes
+    }
+    
+    func updateProcesses(_ processes: [AppDelegate.AppProcess]) {
+        self.processes = processes
+        self.objectWillChange.send()
+    }
+}
+
 struct MemoryVisualizationView: View {
     @ObservedObject var memoryInfoWrapper: ObservableMemoryInfo
     @ObservedObject var swapInfoWrapper: ObservableSwapInfo
+    @ObservedObject var topProcessesWrapper: ObservableTopProcesses
     
     var body: some View {
         VStack(spacing: 10) {
@@ -440,6 +523,46 @@ struct MemoryVisualizationView: View {
                 }
                 .frame(width: 170)
             }
+            
+            // Add divider and title for top processes section
+            Divider()
+                .padding(.vertical, 5)
+            
+            HStack {
+                Text("TOP MEMORY CONSUMERS")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            
+            // Display top processes
+            VStack(spacing: 5) {
+                ForEach(0..<min(3, topProcessesWrapper.processes.count), id: \.self) { index in
+                    let process = topProcessesWrapper.processes[index]
+                    HStack {
+                        Text("\(index + 1). \(process.name)")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Text(formatBytes(process.memoryUsage))
+                            .fontWeight(.medium)
+                    }
+                }
+                
+                // If we have less than 3 processes, show placeholder
+                if topProcessesWrapper.processes.count < 3 {
+                    ForEach(topProcessesWrapper.processes.count..<3, id: \.self) { index in
+                        HStack {
+                            Text("\(index + 1). -")
+                                .foregroundColor(.gray)
+                            Spacer()
+                            Text("-")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 5)
         }
         .padding()
         .frame(width: 400)
