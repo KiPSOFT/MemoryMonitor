@@ -61,21 +61,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Submenu for details
         let detailsMenu = NSMenu()
         
-        // Memory details
+        // Memory details - updated for Activity Monitor style labels
         let memPhysicalItem = NSMenuItem(title: "Physical Memory: Loading...", action: nil, keyEquivalent: "")
         detailsMenu.addItem(memPhysicalItem)
         
-        let memActiveItem = NSMenuItem(title: "Active Memory: Loading...", action: nil, keyEquivalent: "")
-        detailsMenu.addItem(memActiveItem)
-        
-        let memInactiveItem = NSMenuItem(title: "Inactive Memory: Loading...", action: nil, keyEquivalent: "")
-        detailsMenu.addItem(memInactiveItem)
+        let memAppItem = NSMenuItem(title: "App Memory: Loading...", action: nil, keyEquivalent: "")
+        detailsMenu.addItem(memAppItem)
         
         let memWiredItem = NSMenuItem(title: "Wired Memory: Loading...", action: nil, keyEquivalent: "")
         detailsMenu.addItem(memWiredItem)
         
-        let memFreeItem = NSMenuItem(title: "Free Memory: Loading...", action: nil, keyEquivalent: "")
-        detailsMenu.addItem(memFreeItem)
+        let memCompressedItem = NSMenuItem(title: "Compressed: Loading...", action: nil, keyEquivalent: "")
+        detailsMenu.addItem(memCompressedItem)
+        
+        let memCachedItem = NSMenuItem(title: "Cached Files: Loading...", action: nil, keyEquivalent: "")
+        detailsMenu.addItem(memCachedItem)
         
         // Separator
         detailsMenu.addItem(NSMenuItem.separator())
@@ -161,20 +161,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             notifiedAboutSwap = false
         }
         
-        // Update the status bar
+        // Update the status bar - now using App Memory percentage instead of total usage
         if let button = statusBarItem.button {
-            button.title = "RAM: \(memoryInfo.usedPercentage)% | Swap: \(swapInfo.usedPercentage)%"
+            // Calculate a more accurate percentage similar to Activity Monitor
+            let appAndWiredPercentage = Int(Double(memoryInfo.app + memoryInfo.wired) / Double(memoryInfo.total) * 100)
+            button.title = "RAM: \(appAndWiredPercentage)% | Swap: \(swapInfo.usedPercentage)%"
         }
         
         // Update the menu items
         if let menu = statusBarItem.menu {
             if let detailsMenu = menu.item(at: 0)?.submenu {
-                // Update memory details
+                // Update memory details with more accurate breakdown
                 detailsMenu.item(at: 0)?.title = "Physical Memory: \(formatBytes(memoryInfo.total))"
-                detailsMenu.item(at: 1)?.title = "Active Memory: \(formatBytes(memoryInfo.active))"
-                detailsMenu.item(at: 2)?.title = "Inactive Memory: \(formatBytes(memoryInfo.inactive))"
-                detailsMenu.item(at: 3)?.title = "Wired Memory: \(formatBytes(memoryInfo.wired))"
-                detailsMenu.item(at: 4)?.title = "Free Memory: \(formatBytes(memoryInfo.free))"
+                detailsMenu.item(at: 1)?.title = "App Memory: \(formatBytes(memoryInfo.app))"
+                detailsMenu.item(at: 2)?.title = "Wired Memory: \(formatBytes(memoryInfo.wired))"
+                detailsMenu.item(at: 3)?.title = "Compressed: \(formatBytes(memoryInfo.compressed))"
+                detailsMenu.item(at: 4)?.title = "Cached Files: \(formatBytes(memoryInfo.cached))"
                 
                 // Update swap details
                 detailsMenu.item(at: 6)?.title = "Swap Total: \(formatBytes(swapInfo.total))"
@@ -197,6 +199,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var active: UInt64 = 0
         var inactive: UInt64 = 0
         var wired: UInt64 = 0
+        var compressed: UInt64 = 0
+        var app: UInt64 = 0
+        var cached: UInt64 = 0
         var used: UInt64 = 0
         var usedPercentage: Int = 0
     }
@@ -231,9 +236,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         memoryInfo.active = UInt64(stats.active_count) * UInt64(pageSize)
         memoryInfo.inactive = UInt64(stats.inactive_count) * UInt64(pageSize)
         memoryInfo.wired = UInt64(stats.wire_count) * UInt64(pageSize)
+        memoryInfo.compressed = UInt64(stats.compressor_page_count) * UInt64(pageSize)
         
-        memoryInfo.used = memoryInfo.total - memoryInfo.free
+        // Calculate app memory: Active memory minus cached files
+        memoryInfo.cached = UInt64(stats.external_page_count) * UInt64(pageSize) + memoryInfo.inactive
+        memoryInfo.app = memoryInfo.active - (memoryInfo.cached / 2)  // Approximating cached files in active memory
         
+        // Total used memory calculation, similar to Activity Monitor
+        memoryInfo.used = memoryInfo.app + memoryInfo.wired + memoryInfo.compressed
+        
+        // Overall percentage is now based on used memory (app+wired+compressed) divided by total
         memoryInfo.usedPercentage = Int((Double(memoryInfo.used) / Double(memoryInfo.total)) * 100)
         
         return memoryInfo

@@ -5,7 +5,10 @@
 echo "Building Memory Monitor..."
 
 # Determine which version to build
-if [ "$1" == "advanced" ]; then
+if [ "$1" == "visual" ]; then
+    echo "Building visualized version with SwiftUI interface..."
+    swiftc -o MemoryMonitor MemoryMonitorVisualized.swift -framework Cocoa -framework CoreFoundation -framework UserNotifications -framework SwiftUI
+elif [ "$1" == "advanced" ]; then
     echo "Building advanced version..."
     swiftc -o MemoryMonitor MemoryMonitorAdvanced.swift -framework Cocoa -framework CoreFoundation -framework UserNotifications
 else

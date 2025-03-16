@@ -4,8 +4,9 @@
 
 echo "Building and installing Memory Monitor as a daemon..."
 
-# Build the advanced version
-./build.sh advanced
+# Build the visual version instead of advanced version
+echo "Building visual version with Activity Monitor style interface..."
+./build.sh visual
 
 if [ $? -ne 0 ]; then
     echo "Build failed. Cannot install daemon."
@@ -33,9 +34,9 @@ echo "Installed plist to $PLIST_DEST"
 launchctl load "$PLIST_DEST"
 
 if [ $? -eq 0 ]; then
-    echo "Memory Monitor daemon installed and started successfully!"
+    echo "Memory Monitor daemon (visual version) installed and started successfully!"
     echo "The application will now run at startup and monitor memory usage."
-    echo "To uninstall, run: launchctl unload $PLIST_DEST"
+    echo "To uninstall, run: ./uninstall.sh"
 else
     echo "Failed to load daemon."
 fi 
